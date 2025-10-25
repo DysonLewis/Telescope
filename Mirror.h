@@ -17,18 +17,16 @@ public:
     
     virtual Intersection intersect(const Ray& ray) const = 0;
     virtual void draw(sf::RenderWindow& window, const sf::Vector2f& offset, float scale) const = 0;
-    
-    // For serialization/deserialization (future use)
     virtual std::string getType() const = 0;
 };
 
-// Parabolic mirror: y^2 = 4fx where f is focal length
+// Parabolic mirror - YOU WERE MISSING THIS LINE!
 class ParabolicMirror : public Mirror {
 public:
     float focalLength;
     float yMin, yMax;
     float centerX;
-    float holeRadius; // Radius of central hole (for Cassegrain configuration)
+    float holeRadius;
     sf::Color drawColor;
 
     ParabolicMirror(float f, float ymin, float ymax, float cx = 400.0f, 
@@ -43,9 +41,6 @@ public:
     }
 
     sf::Vector2f getNormal(float y) const {
-        // Parametric form: x = c - y²/(4f), so dx/dy = -y/(2f)
-        // Tangent vector: (dx/dy, 1) = (-y/(2f), 1)
-        // Normal (perpendicular): (1, y/(2f))
         float dxdy = -y / (2.0f * focalLength);
         sf::Vector2f normal(1.0f, dxdy);
         float mag = std::sqrt(normal.x * normal.x + normal.y * normal.y);
@@ -59,10 +54,6 @@ public:
         double ox = ray.origin.x, oy = ray.origin.y;
         double dx = ray.direction.x, dy = ray.direction.y;
 
-        // Ray: (x, y) = (ox, oy) + t(dx, dy)
-        // Surface: x = cx - y²/(4f)
-        // Substitute: ox + t*dx = cx - (oy + t*dy)²/(4f)
-        // Rearrange to quadratic in t
         double a = dy * dy / (4.0 * focalLength);
         double b = dx + oy * dy / (2.0 * focalLength);
         double c = ox - centerX + oy * oy / (4.0 * focalLength);
@@ -70,10 +61,8 @@ public:
         double t = -1;
 
         if (std::abs(a) < EPSILON) {
-            // Linear equation
             if (std::abs(b) > EPSILON) t = -c / b;
         } else {
-            // Quadratic equation
             double discriminant = b * b - 4.0 * a * c;
             if (discriminant >= 0) {
                 double sqrtDisc = std::sqrt(discriminant);
@@ -85,7 +74,6 @@ public:
         }
 
         if (t > EPSILON) {
-            // Newton-Raphson refinement for accuracy
             auto surfaceEq = [&](double tp) {
                 double y = oy + tp * dy;
                 return ox + tp * dx - (centerX - y * y / (4.0 * focalLength));
@@ -105,11 +93,8 @@ public:
 
             double yHit = oy + t * dy;
             
-            // Check if hit point is within mirror bounds and outside the hole
             if (yHit >= yMin - EPSILON && yHit <= yMax + EPSILON) {
-                // Check if ray hits the central hole (passes through)
                 if (holeRadius > 0.0f && std::abs(yHit) < holeRadius) {
-                    // Ray passes through hole, no intersection
                     return result;
                 }
                 
@@ -118,7 +103,6 @@ public:
                                             static_cast<float>(yHit));
                 result.normal = getNormal(static_cast<float>(yHit));
                 
-                // Ensure normal points toward incoming ray
                 double dot = dx * result.normal.x + dy * result.normal.y;
                 if (dot > 0.0) {
                     result.normal = sf::Vector2f(-result.normal.x, -result.normal.y);
@@ -133,9 +117,7 @@ public:
     void draw(sf::RenderWindow& window, const sf::Vector2f& offset, float scale) const override {
         if (!isActive) return;
         
-        // Draw parabola in two parts if there's a hole
         if (holeRadius > 0.0f) {
-            // Upper part (above hole)
             sf::VertexArray upperPart(sf::LineStrip);
             int steps = 100;
             for (int i = 0; i <= steps; i++) {
@@ -148,7 +130,6 @@ public:
             }
             window.draw(upperPart);
             
-            // Lower part (below hole)
             sf::VertexArray lowerPart(sf::LineStrip);
             for (int i = 0; i <= steps; i++) {
                 float y = yMin + i * (-holeRadius - yMin) / steps;
@@ -160,7 +141,6 @@ public:
             }
             window.draw(lowerPart);
             
-            // Draw hole edges
             float yHoleTop = holeRadius;
             float yHoleBottom = -holeRadius;
             float xHoleTop = getX(yHoleTop);
@@ -169,14 +149,12 @@ public:
             sf::Vertex holeEdges[] = {
                 sf::Vertex(sf::Vector2f(offset.x + xHoleTop * scale, offset.y - yHoleTop * scale), sf::Color(100, 100, 100)),
                 sf::Vertex(sf::Vector2f(offset.x + (xHoleTop - 30) * scale, offset.y - yHoleTop * scale), sf::Color(100, 100, 100)),
-                
                 sf::Vertex(sf::Vector2f(offset.x + xHoleBottom * scale, offset.y - yHoleBottom * scale), sf::Color(100, 100, 100)),
                 sf::Vertex(sf::Vector2f(offset.x + (xHoleBottom - 30) * scale, offset.y - yHoleBottom * scale), sf::Color(100, 100, 100))
             };
             window.draw(holeEdges, 4, sf::Lines);
             
         } else {
-            // Draw complete parabola
             sf::VertexArray parabola(sf::LineStrip);
             int steps = 200;
             for (int i = 0; i <= steps; i++) {
@@ -190,11 +168,11 @@ public:
     }
 };
 
-// Flat (plane) mirror
+// Flat mirror
 class FlatMirror : public Mirror {
 public:
     sf::Vector2f center;
-    float angle; // in radians
+    float angle;
     float size;
     sf::Color drawColor;
 
@@ -231,7 +209,6 @@ public:
     }
 
     sf::Vector2f getNormal() const {
-        // Normal perpendicular to mirror direction
         float nx = -std::sin(angle);
         float ny = std::cos(angle);
         return sf::Vector2f(nx, ny);
@@ -254,9 +231,7 @@ public:
             float t = (diff.x * my - diff.y * mx) / denom;
             float s = (diff.x * dy - diff.y * dx) / denom;
 
-            // Check if intersection is within mirror segment (with small margin)
             if (t > EPSILON && s >= -0.05f && s <= 1.05f) {
-                // Newton-Raphson refinement
                 for (int i = 0; i < 2; i++) {
                     float yHit = ray.origin.y + t * dy;
                     float xHit = ray.origin.x + t * dx;
@@ -274,7 +249,6 @@ public:
                 result.point = ray.pointAt(t);
                 result.normal = getNormal();
                 
-                // Ensure normal points toward incoming ray
                 float dot = ray.direction.x * result.normal.x + ray.direction.y * result.normal.y;
                 if (dot > 0) {
                     result.normal = -result.normal;
@@ -298,13 +272,13 @@ public:
     }
 };
 
-// Hyperbolic mirror: (x-cx)²/a² - (y-cy)²/b² = 1
+// Hyperbolic mirror
 class HyperbolicMirror : public Mirror {
 public:
     float centerX, centerY;
-    float a, b; // semi-major and semi-minor axes
+    float a, b;
     float yMin, yMax;
-    bool useLeftBranch; // true for left branch, false for right branch
+    bool useLeftBranch;
     sf::Color drawColor;
 
     HyperbolicMirror(float cx, float cy, float semiMajor, float semiMinor, 
@@ -317,8 +291,6 @@ public:
     std::string getType() const override { return "hyperbolic"; }
 
     float getX(float y) const {
-        // Hyperbola: (x-cx)²/a² - (y-cy)²/b² = 1
-        // Solve for x: x = cx ± a*sqrt(1 + (y-cy)²/b²)
         float yRel = y - centerY;
         float term = 1.0f + (yRel * yRel) / (b * b);
         if (term < 0) return centerX;
@@ -327,16 +299,11 @@ public:
     }
 
     sf::Vector2f getNormal(float y) const {
-        // For hyperbola (x-cx)²/a² - (y-cy)²/b² = 1
-        // Implicit differentiation: 2(x-cx)/a² - 2(y-cy)/(b²) * dy/dx = 0
-        // dy/dx = (x-cx)*b² / ((y-cy)*a²)
-        // dx/dy = (y-cy)*a² / ((x-cx)*b²)
         float x = getX(y);
         float yRel = y - centerY;
         float xRel = x - centerX;
         
         if (std::abs(xRel) < EPSILON) {
-            // At vertex, normal is horizontal
             return useLeftBranch ? sf::Vector2f(-1.0f, 0.0f) : sf::Vector2f(1.0f, 0.0f);
         }
         
@@ -345,7 +312,6 @@ public:
         float mag = std::sqrt(normal.x * normal.x + normal.y * normal.y);
         normal = sf::Vector2f(normal.x / mag, -normal.y / mag);
         
-        // For left branch, flip normal direction
         if (useLeftBranch) {
             normal = -normal;
         }
@@ -362,9 +328,6 @@ public:
         double dx = ray.direction.x;
         double dy = ray.direction.y;
 
-        // Ray: (x, y) = (ox, oy) + t(dx, dy) relative to center
-        // Hyperbola: x²/a² - y²/b² = 1
-        // Substitute and rearrange to quadratic in t
         double A = (dx * dx) / (a * a) - (dy * dy) / (b * b);
         double B = 2.0 * ((ox * dx) / (a * a) - (oy * dy) / (b * b));
         double C = (ox * ox) / (a * a) - (oy * oy) / (b * b) - 1.0;
@@ -372,19 +335,16 @@ public:
         double t = -1;
 
         if (std::abs(A) < EPSILON) {
-            // Linear equation
             if (std::abs(B) > EPSILON) {
                 t = -C / B;
             }
         } else {
-            // Quadratic equation
             double discriminant = B * B - 4.0 * A * C;
             if (discriminant >= 0) {
                 double sqrtDisc = std::sqrt(discriminant);
                 double t1 = (-B - sqrtDisc) / (2.0 * A);
                 double t2 = (-B + sqrtDisc) / (2.0 * A);
                 
-                // Choose correct intersection based on branch
                 if (t1 > EPSILON && t2 > EPSILON) {
                     double x1 = ox + t1 * dx;
                     double x2 = ox + t2 * dx;
@@ -403,7 +363,6 @@ public:
         }
 
         if (t > EPSILON) {
-            // Newton-Raphson refinement
             auto surfaceEq = [&](double tp) {
                 double x = ox + tp * dx;
                 double y = oy + tp * dy;
@@ -430,7 +389,6 @@ public:
                                             static_cast<float>(yHit));
                 result.normal = getNormal(static_cast<float>(yHit));
                 
-                // Ensure normal points toward incoming ray
                 double dot = dx * result.normal.x + dy * result.normal.y;
                 if (dot > 0.0) {
                     result.normal = -result.normal;
@@ -454,86 +412,6 @@ public:
             hyperbola.append(sf::Vertex(screenPos, drawColor));
         }
         window.draw(hyperbola);
-    }
-};
-
-// Camera sensor - acts as a detection surface (doesn't reflect)
-class CameraSensor : public Mirror {
-public:
-    sf::Vector2f center;
-    float width;
-    float angle; // in radians
-    sf::Color drawColor;
-    std::vector<sf::Vector2f> hitPoints; // Store where rays hit
-
-    CameraSensor(sf::Vector2f c, float w, float ang = 0.0f, const std::string& n = "Camera")
-        : Mirror(n), center(c), width(w), angle(ang), drawColor(sf::Color::Cyan) {}
-
-    std::string getType() const override { return "camera"; }
-
-    void clearHits() { hitPoints.clear(); }
-
-    sf::Vector2f getStart() const {
-        float halfWidth = width / 2.0f;
-        float dx = halfWidth * std::cos(angle);
-        float dy = halfWidth * std::sin(angle);
-        return sf::Vector2f(center.x - dx, center.y - dy);
-    }
-
-    sf::Vector2f getEnd() const {
-        float halfWidth = width / 2.0f;
-        float dx = halfWidth * std::cos(angle);
-        float dy = halfWidth * std::sin(angle);
-        return sf::Vector2f(center.x + dx, center.y + dy);
-    }
-
-    Intersection intersect(const Ray& ray) const override {
-        Intersection result;
-        result.mirrorPtr = this;
-        
-        sf::Vector2f start = getStart();
-        sf::Vector2f end = getEnd();
-        sf::Vector2f sensorDir(end.x - start.x, end.y - start.y);
-        
-        float dx = ray.direction.x, dy = ray.direction.y;
-        float sx = sensorDir.x, sy = sensorDir.y;
-        float denom = dx * sy - dy * sx;
-
-        if (std::abs(denom) > EPSILON) {
-            sf::Vector2f diff(start.x - ray.origin.x, start.y - ray.origin.y);
-            float t = (diff.x * sy - diff.y * sx) / denom;
-            float s = (diff.x * dy - diff.y * dx) / denom;
-
-            if (t > EPSILON && s >= 0.0f && s <= 1.0f) {
-                result.hit = true;
-                result.point = ray.pointAt(t);
-                result.distance = t;
-                // Camera doesn't reflect, so normal doesn't matter
-            }
-        }
-        return result;
-    }
-
-    void draw(sf::RenderWindow& window, const sf::Vector2f& offset, float scale) const override {
-        if (!isActive) return;
-        
-        sf::Vector2f start = getStart();
-        sf::Vector2f end = getEnd();
-        
-        // Draw sensor line
-        sf::Vertex line[] = {
-            sf::Vertex(sf::Vector2f(offset.x + start.x * scale, offset.y - start.y * scale), drawColor),
-            sf::Vertex(sf::Vector2f(offset.x + end.x * scale, offset.y - end.y * scale), drawColor)
-        };
-        window.draw(line, 2, sf::Lines);
-        
-        // Draw hit points
-        for (const auto& hit : hitPoints) {
-            sf::CircleShape dot(2);
-            dot.setFillColor(sf::Color::Red);
-            dot.setPosition(offset.x + hit.x * scale - 2, offset.y - hit.y * scale - 2);
-            window.draw(dot);
-        }
     }
 };
 
