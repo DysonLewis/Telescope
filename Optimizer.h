@@ -75,7 +75,7 @@ public:
                     Ray ray(sf::Vector2f(rayStartX, h), sf::Vector2f(1.0f, 0.0f));
                     
                     // Trace ray through telescope
-                    traceRay(ray, mirrors, maxBounces);
+                    traceRay(ray, mirrors, camera, maxBounces);
                 }
 
                 hits = camera->hitPoints.size();
@@ -182,12 +182,21 @@ public:
     }
 
 private:
-    static void traceRay(Ray& ray, std::vector<std::unique_ptr<Mirror>>& mirrors, int maxBounces) {
+    static void traceRay(Ray& ray, std::vector<std::unique_ptr<Mirror>>& mirrors, 
+                        CameraSensor* camera, int maxBounces) {
         for (int bounce = 0; bounce < maxBounces; bounce++) {
             Intersection closest;
             Mirror* hitMirror = nullptr;
             
+            // Green rays (bounce 2+) only collide with camera sensor
+            bool isGreenRay = (bounce >= 2);
+            
             for (auto& mirror : mirrors) {
+                // Skip non-camera mirrors for green rays
+                if (isGreenRay && mirror->getType() != "camera") {
+                    continue;
+                }
+                
                 Intersection intersection = mirror->intersect(ray);
                 if (intersection.hit && intersection.distance < closest.distance) {
                     closest = intersection;
@@ -196,16 +205,25 @@ private:
             }
 
             if (closest.hit && hitMirror) {
+                // Check if we hit the camera sensor
                 if (hitMirror->getType() == "camera") {
                     ray.path.push_back(closest.point);
-                    CameraSensor* cam = dynamic_cast<CameraSensor*>(hitMirror);
-                    if (cam) {
-                        cam->hitPoints.push_back(closest.point);
+                    if (camera) {
+                        camera->hitPoints.push_back(closest.point);
                     }
+                    break; // Stop ray at camera
+                }
+                
+                // Check if incoming ray (bounce 0) hit secondary first - skip this ray
+                if (bounce == 0 && hitMirror->getType() == "hyperbolic") {
+                    ray.bounces = -1; // Mark as invalid
                     break;
                 }
+                
+                // Otherwise reflect off mirror
                 ray.reflect(closest.point, closest.normal);
             } else {
+                // No intersection, extend ray and stop
                 break;
             }
         }
@@ -236,7 +254,7 @@ private:
         for (int i = 0; i < numRays; i++) {
             float h = rayYMin + i * (rayYMax - rayYMin) / (numRays - 1);
             Ray ray(sf::Vector2f(rayStartX, h), sf::Vector2f(1.0f, 0.0f));
-            traceRay(ray, mirrors, maxBounces);
+            traceRay(ray, mirrors, camera, maxBounces);
         }
 
         int hits = camera->hitPoints.size();
