@@ -4,7 +4,7 @@ CXXFLAGS = -std=c++20 -Wall -O2 -march=native -fno-fast-math
 LDFLAGS = -lsfml-graphics -lsfml-window -lsfml-system
 
 # Target executable
-TARGET = optic_raytracer
+TARGET = compiled/optic_raytracer
 
 # Source files
 SOURCES = optic_raytracer.cpp
