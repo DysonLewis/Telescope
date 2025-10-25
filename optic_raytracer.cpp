@@ -7,6 +7,7 @@
 #include <vector>
 #include <sstream>
 #include <iomanip>
+#include <cmath>
 
 const float PRIMARY_FOCAL_LENGTH = 400.0f;
 const int NUM_RAYS = 10000;
@@ -524,7 +525,7 @@ int main() {
         optimizeButton.draw(window);
         fineOptimizeButton.draw(window);
 
-        sf::Text title("Ritchey-Chrétien Telescope - Light passes through hole in primary to camera behind", font, 17);
+        sf::Text title("Cassegrain- Light passes through hole in primary to camera behind", font, 17);
         title.setFillColor(sf::Color::White);
         title.setPosition(20, 20);
         window.draw(title);
@@ -567,9 +568,9 @@ int main() {
             float angularResArcsec = scene.camera->getAngularResolutionArcsec(effectiveFocalLength);
             float fovArcmin = scene.camera->getFieldOfViewArcmin(effectiveFocalLength);
             
-            opticalSS << "Sensor: " << scene.camera->SENSOR_WIDTH_MM << "×" 
+            opticalSS << "Sensor: " << scene.camera->SENSOR_WIDTH_MM << "x" 
                      << scene.camera->SENSOR_HEIGHT_MM << " mm  |  Pixel: " 
-                     << scene.camera->PIXEL_SIZE_MICRONS << " μm  |  f_eff: " 
+                     << scene.camera->PIXEL_SIZE_MICRONS << " micro_m  |  f_eff: " 
                      << std::fixed << std::setprecision(0) << effectiveFocalLength << " mm";
             
             sf::Text opticalSpec(opticalSS.str(), font, 13);
@@ -580,7 +581,7 @@ int main() {
             std::stringstream angularSS;
             angularSS << "Angular Resolution: " << std::fixed << std::setprecision(2) 
                      << angularResArcsec << " arcsec/pixel  |  FOV: " 
-                     << std::setprecision(2) << fovArcmin << " × " 
+                     << std::setprecision(2) << fovArcmin << " x " 
                      << std::setprecision(2) << (fovArcmin * scene.camera->SENSOR_HEIGHT_MM / scene.camera->SENSOR_WIDTH_MM)
                      << " arcmin";
             
