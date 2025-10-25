@@ -10,7 +10,7 @@ TARGET = optic_raytracer
 SOURCES = optic_raytracer.cpp
 
 # Header files (for dependency tracking)
-HEADERS = Ray.h Mirror.h Optimizer.h
+HEADERS = Ray.h Mirror.h Camera.h Optimizer.h
 
 # Object files
 OBJECTS = $(SOURCES:.cpp=.o)
