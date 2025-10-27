@@ -2,15 +2,17 @@
 #include "Mirror.h"
 #include "Camera.h"
 #include "Optimizer.h"
+#include "BatchOptimizer.h"
+#include "ConfigBuilder.h"
 #include <SFML/Graphics.hpp>
+#include <iostream>
 #include <memory>
 #include <vector>
 #include <sstream>
 #include <iomanip>
 #include <cmath>
 
-const float PRIMARY_FOCAL_LENGTH = 400.0f;
-const int NUM_RAYS = 10000;
+const int NUM_RAYS = 100;
 
 class Button {
 public:
@@ -63,14 +65,16 @@ public:
     sf::CircleShape shape;
     sf::Text label;
     bool isHovered;
+    float incrementValue;
     
-    IncrementButton(float x, float y, float radius, const std::string& text, sf::Font& font) {
+    IncrementButton(float x, float y, float radius, const std::string& text, sf::Font& font, float incValue = 1.0f) {
         shape.setRadius(radius);
         shape.setPosition(x, y);
         shape.setFillColor(sf::Color(70, 140, 220));
         shape.setOutlineColor(sf::Color::White);
         shape.setOutlineThickness(1);
         isHovered = false;
+        incrementValue = incValue;
         
         label.setFont(font);
         label.setString(text);
@@ -158,13 +162,7 @@ public:
 
     void updateValueText() {
         std::stringstream ss;
-        if (stepSize <= 0.01f) {
-            ss << std::fixed << std::setprecision(4) << currentVal;
-        } else if (stepSize < 0.1f) {
-            ss << std::fixed << std::setprecision(2) << currentVal;
-        } else {
-            ss << std::fixed << std::setprecision(1) << currentVal;
-        }
+        ss << std::fixed << std::setprecision(5) << currentVal;
         valueText.setString(ss.str());
         valueText.setPosition(position.x + width + 10, position.y - 8);
     }
@@ -264,13 +262,15 @@ public:
                 
                 ray.reflect(closest.point, closest.normal);
             } else {
-                ray.extend(500.0f);
+                // Ray didn't hit anything - extend it far to show it missed
+                ray.extend(2000.0f);
                 break;
             }
         }
         
         if (ray.bounces == maxBounces) {
-            ray.extend(300.0f);
+            // Ray exceeded max bounces - extend it to show it's still going
+            ray.extend(2000.0f);
         }
         
         if (ray.bounces >= 0 && camera) {
@@ -299,8 +299,38 @@ public:
     }
 };
 
+void rebuildConfiguration(std::vector<OpticalConfig>& availableConfigs, int currentConfigIndex,
+                         Scene& scene, float primaryCenterX, Slider& sliderSecondaryX, 
+                         Slider& sliderSecondaryY) {
+    // Clear existing mirrors
+    scene.mirrors.clear();
+    
+    // Build telescope configuration
+    ConfigBuilder::buildTelescopeFromConfig(availableConfigs[currentConfigIndex],
+                                           scene.mirrors, scene.camera, primaryCenterX);
+    
+    // Recreate camera at the end of mirrors list
+    auto newCamera = std::make_unique<CameraSensor>(
+        sf::Vector2f(primaryCenterX + 40.0f, 0.0f), 
+        11.2f,  // Use actual sensor width
+        M_PI / 2.0f, "Camera"
+    );
+    scene.camera = newCamera.get();
+    scene.addMirror(std::move(newCamera));
+    
+    // Update sliders to match loaded config
+    HyperbolicMirror* secondaryMirror = dynamic_cast<HyperbolicMirror*>(scene.mirrors[1].get());
+    if (secondaryMirror) {
+        sliderSecondaryX.currentVal = secondaryMirror->centerX;
+        sliderSecondaryY.currentVal = secondaryMirror->centerY;
+        sliderSecondaryX.updateHandlePosition();
+        sliderSecondaryY.updateHandlePosition();
+    }
+}
+
 int main() {
-    sf::RenderWindow window(sf::VideoMode(1400, 900), "Ritchey-Chrétien Telescope Ray Tracing");
+    // Larger window to see the whole telescope system
+    sf::RenderWindow window(sf::VideoMode(1800, 1000), "Cassegrain Telescope Ray Tracing");
     window.setFramerateLimit(60);
 
     sf::Font font;
@@ -309,58 +339,66 @@ int main() {
             if (!font.loadFromFile("/System/Library/Fonts/Helvetica.ttc")) 
                 return -1;
 
-    Slider sliderSecondaryX(50, 800, 300, 50, 450, 250, "Secondary X Position (mm)", font, 0.001f);
-    Slider sliderSecondaryY(50, 850, 300, -20, 20, 0, "Secondary Y Position (mm)", font, 0.001f);
-    Slider sliderCameraX(500, 800, 400, 510, 600, 540, "Camera X Position (mm)", font, 1.0f);
-    Slider sliderCameraY(500, 850, 400, -30, 30, 0, "Camera Y Position (mm)", font, 1.0f);
+    // Load configurations from results CSV
+    std::vector<OpticalConfig> availableConfigs;
+    std::string configFile = "optimization_results.csv";
+    availableConfigs = BatchOptimizer::loadResultsFromCSV(configFile);
+    
+    // If no results file, create default config
+    if (availableConfigs.empty()) {
+        std::cout << "No optimization results found. Using default configuration." << std::endl;
+        OpticalConfig defaultConfig;
+        defaultConfig.primaryDiameter = 300.0f;
+        defaultConfig.secondaryDiameter = 100.0f;
+        defaultConfig.primaryR = 1600.0f;
+        defaultConfig.secondaryR = -600.0f;
+        defaultConfig.primaryF = 800.0f;
+        defaultConfig.secondaryF = -300.0f;
+        defaultConfig.primaryK = -1.0f;
+        defaultConfig.secondaryK = -3.5f;
+        defaultConfig.mirrorSeparation = 450.0f;
+        defaultConfig.systemFocalLength = 2000.0f;
+        defaultConfig.bestSecondaryX = 250.0f;
+        defaultConfig.bestSecondaryY = 0.0f;
+        availableConfigs.push_back(defaultConfig);
+    }
+    
+    int currentConfigIndex = 0;
+    float primaryCenterX = 1400.0f;  // Moved to right side of screen
 
-    // Fine control buttons for secondary mirror - positioned ABOVE sliders
-    IncrementButton secXDecButton(50, 768, 12, "-", font);
-    IncrementButton secXIncButton(90, 768, 12, "+", font);
-    IncrementButton secYDecButton(50, 818, 12, "-", font);
-    IncrementButton secYIncButton(90, 818, 12, "+", font);
+    // UI Controls - adjusted positions for larger window
+    Slider sliderSecondaryX(50, 900, 300, -2000, 2000, 250, "Secondary X (mm)", font, 0.001f);
+    Slider sliderSecondaryY(50, 950, 300, -20, 20, 0, "Secondary Y (mm)", font, 0.001f);
+    
+    Button prevConfigButton(450, 900, 80, 30, "< Prev", font);
+    Button nextConfigButton(540, 900, 80, 30, "Next >", font);
+    Button loadConfigButton(630, 900, 100, 30, "Load CSV", font);
+    Button centerSecondaryButton(740, 900, 140, 30, "Center Secondary", font);
 
-    Button optimizeButton(950, 800, 150, 30, "Optimize (Scan)", font);
-    Button fineOptimizeButton(950, 840, 150, 30, "Fine Optimize", font);
+    // Coarse and fine increment buttons for X
+    IncrementButton secXDecCoarse(50, 868, 12, "-", font, 1.0f);
+    IncrementButton secXIncCoarse(70, 868, 12, "+", font, 1.0f);
+    IncrementButton secXDecFine(90, 868, 10, "-", font, 0.001f);
+    IncrementButton secXIncFine(110, 868, 10, "+", font, 0.001f);
+    
+    // Coarse and fine increment buttons for Y
+    IncrementButton secYDecCoarse(50, 918, 12, "-", font, 0.1f);
+    IncrementButton secYIncCoarse(70, 918, 12, "+", font, 0.1f);
+    IncrementButton secYDecFine(90, 918, 10, "-", font, 0.001f);
+    IncrementButton secYIncFine(110, 918, 10, "+", font, 0.001f);
+
+    Button optimizeButton(1200, 900, 150, 30, "Optimize", font);
+    Button fineOptimizeButton(1200, 940, 150, 30, "Fine Tune", font);
 
     bool isOptimizing = false;
     OptimizationResult lastOptResult;
 
-    Scene scene(sf::Vector2f(100, 450), 1.0f);
+    // Adjusted scene offset and scale for better viewing with primary on right
+    Scene scene(sf::Vector2f(100, 500), 0.7f);
     
-    auto primary = std::make_unique<ParabolicMirror>(
-        PRIMARY_FOCAL_LENGTH,
-        -150.0f,
-        150.0f,
-        500.0f,
-        "Primary",
-        25.0f
-    );
-    
-    auto secondary = std::make_unique<HyperbolicMirror>(
-        250.0f,
-        0.0f,
-        30.0f,
-        25.0f,
-        -50.0f,
-        50.0f,
-        true,
-        "Secondary"
-    );
-
-    auto camera = std::make_unique<CameraSensor>(
-        sf::Vector2f(540.0f, 0.0f),
-        40.0f,
-        M_PI / 2.0f,
-        "Camera"
-    );
-
-    // CRITICAL: Set scene.camera pointer BEFORE moving
-    scene.camera = camera.get();
-
-    scene.addMirror(std::move(primary));
-    scene.addMirror(std::move(secondary));
-    scene.addMirror(std::move(camera));
+    // Build initial telescope configuration
+    rebuildConfiguration(availableConfigs, currentConfigIndex, scene, primaryCenterX, 
+                        sliderSecondaryX, sliderSecondaryY);
 
     while (window.isOpen()) {
         sf::Event event;
@@ -377,49 +415,99 @@ int main() {
             if (event.type == sf::Event::MouseButtonPressed) {
                 sliderSecondaryX.handleMousePress(mousePos);
                 sliderSecondaryY.handleMousePress(mousePos);
-                sliderCameraX.handleMousePress(mousePos);
-                sliderCameraY.handleMousePress(mousePos);
 
-                // Handle increment buttons for secondary mirror
-                if (secXDecButton.contains(mousePos)) {
+                // Config navigation
+                if (prevConfigButton.contains(mousePos) && currentConfigIndex > 0) {
+                    currentConfigIndex--;
+                    rebuildConfiguration(availableConfigs, currentConfigIndex, scene, primaryCenterX,
+                                       sliderSecondaryX, sliderSecondaryY);
+                }
+                
+                if (nextConfigButton.contains(mousePos) && currentConfigIndex < (int)availableConfigs.size() - 1) {
+                    currentConfigIndex++;
+                    rebuildConfiguration(availableConfigs, currentConfigIndex, scene, primaryCenterX,
+                                       sliderSecondaryX, sliderSecondaryY);
+                }
+                
+                if (loadConfigButton.contains(mousePos)) {
+                    availableConfigs = BatchOptimizer::loadResultsFromCSV(configFile);
+                    if (!availableConfigs.empty()) {
+                        currentConfigIndex = 0;
+                        rebuildConfiguration(availableConfigs, currentConfigIndex, scene, primaryCenterX,
+                                           sliderSecondaryX, sliderSecondaryY);
+                    }
+                }
+
+                // Center secondary button
+                if (centerSecondaryButton.contains(mousePos)) {
+                    HyperbolicMirror* secondaryMirror = dynamic_cast<HyperbolicMirror*>(scene.mirrors[1].get());
+                    if (secondaryMirror) {
+                        // Center in screen coordinates: middle of window horizontally
+                        float screenCenterX = 900.0f;  // Half of 1800
+                        float worldCenterX = (screenCenterX - scene.offset.x) / scene.scale;
+                        
+                        sliderSecondaryX.currentVal = worldCenterX;
+                        sliderSecondaryX.updateHandlePosition();
+                    }
+                }
+
+                // X Increment buttons - coarse
+                if (secXDecCoarse.contains(mousePos)) {
                     sliderSecondaryX.currentVal = std::max(sliderSecondaryX.minVal, 
-                                                           sliderSecondaryX.currentVal - 0.001f);
+                                                           sliderSecondaryX.currentVal - secXDecCoarse.incrementValue);
                     sliderSecondaryX.updateHandlePosition();
                 }
-                if (secXIncButton.contains(mousePos)) {
+                if (secXIncCoarse.contains(mousePos)) {
                     sliderSecondaryX.currentVal = std::min(sliderSecondaryX.maxVal, 
-                                                           sliderSecondaryX.currentVal + 0.001f);
+                                                           sliderSecondaryX.currentVal + secXIncCoarse.incrementValue);
                     sliderSecondaryX.updateHandlePosition();
                 }
-                if (secYDecButton.contains(mousePos)) {
+                // X Increment buttons - fine
+                if (secXDecFine.contains(mousePos)) {
+                    sliderSecondaryX.currentVal = std::max(sliderSecondaryX.minVal, 
+                                                           sliderSecondaryX.currentVal - secXDecFine.incrementValue);
+                    sliderSecondaryX.updateHandlePosition();
+                }
+                if (secXIncFine.contains(mousePos)) {
+                    sliderSecondaryX.currentVal = std::min(sliderSecondaryX.maxVal, 
+                                                           sliderSecondaryX.currentVal + secXIncFine.incrementValue);
+                    sliderSecondaryX.updateHandlePosition();
+                }
+                
+                // Y Increment buttons - coarse
+                if (secYDecCoarse.contains(mousePos)) {
                     sliderSecondaryY.currentVal = std::max(sliderSecondaryY.minVal, 
-                                                           sliderSecondaryY.currentVal - 0.01f);
+                                                           sliderSecondaryY.currentVal - secYDecCoarse.incrementValue);
                     sliderSecondaryY.updateHandlePosition();
                 }
-                if (secYIncButton.contains(mousePos)) {
+                if (secYIncCoarse.contains(mousePos)) {
                     sliderSecondaryY.currentVal = std::min(sliderSecondaryY.maxVal, 
-                                                           sliderSecondaryY.currentVal + 0.01f);
+                                                           sliderSecondaryY.currentVal + secYIncCoarse.incrementValue);
+                    sliderSecondaryY.updateHandlePosition();
+                }
+                // Y Increment buttons - fine
+                if (secYDecFine.contains(mousePos)) {
+                    sliderSecondaryY.currentVal = std::max(sliderSecondaryY.minVal, 
+                                                           sliderSecondaryY.currentVal - secYDecFine.incrementValue);
+                    sliderSecondaryY.updateHandlePosition();
+                }
+                if (secYIncFine.contains(mousePos)) {
+                    sliderSecondaryY.currentVal = std::min(sliderSecondaryY.maxVal, 
+                                                           sliderSecondaryY.currentVal + secYIncFine.incrementValue);
                     sliderSecondaryY.updateHandlePosition();
                 }
 
+                // Optimization buttons
                 if (optimizeButton.contains(mousePos) && !isOptimizing) {
                     optimizeButton.setPressed(true);
                     isOptimizing = true;
                     
-                    // Scan only in X axis, keep Y at current value
                     lastOptResult = TelescopeOptimizer::optimizeSecondaryPosition(
-                        scene.mirrors,
-                        scene.camera,
-                        NUM_RAYS,
-                        -50.0f,
-                        -120.0f,
-                        120.0f,
-                        50.0f,     // Scan full X range
-                        450.0f,
-                        0.5f,      // 1mm steps in X
-                        sliderSecondaryY.getValue(),  // Keep Y fixed at current value
-                        sliderSecondaryY.getValue(),  // Same Y (no scan)
-                        1.0f       // Y step (won't matter since min=max)
+                        scene.mirrors, scene.camera, NUM_RAYS,
+                        -50.0f, -120.0f, 120.0f,
+                        50.0f, 450.0f, 0.5f,
+                        sliderSecondaryY.getValue(),
+                        sliderSecondaryY.getValue(), 1.0f
                     );
                     
                     sliderSecondaryX.currentVal = lastOptResult.bestSecondaryX;
@@ -435,19 +523,12 @@ int main() {
                     fineOptimizeButton.setPressed(true);
                     isOptimizing = true;
                     
-                    // Fine optimization - search ±3mm around current position with 0.01mm precision
                     lastOptResult = TelescopeOptimizer::fineOptimize(
-                        scene.mirrors,
-                        scene.camera,
-                        NUM_RAYS,
-                        -50.0f,
-                        -120.0f,
-                        120.0f,
+                        scene.mirrors, scene.camera, NUM_RAYS,
+                        -50.0f, -120.0f, 120.0f,
                         sliderSecondaryX.getValue(),
-                        sliderSecondaryY.getValue(),  // Y stays fixed
-                        3.0f,      // Search radius ±3mm in X only
-                        0.1f,      // Start with 0.1mm steps
-                        2500         // 
+                        sliderSecondaryY.getValue(),
+                        3.0f, 0.1f, 2500
                     );
                     
                     sliderSecondaryX.currentVal = lastOptResult.bestSecondaryX;
@@ -462,20 +543,20 @@ int main() {
             if (event.type == sf::Event::MouseButtonReleased) {
                 sliderSecondaryX.handleMouseRelease();
                 sliderSecondaryY.handleMouseRelease();
-                sliderCameraX.handleMouseRelease();
-                sliderCameraY.handleMouseRelease();
             }
             if (event.type == sf::Event::MouseMoved) {
                 sliderSecondaryX.handleMouseMove(mousePos);
                 sliderSecondaryY.handleMouseMove(mousePos);
-                sliderCameraX.handleMouseMove(mousePos);
-                sliderCameraY.handleMouseMove(mousePos);
                 
-                // Highlight buttons on hover
-                secXDecButton.setHighlight(secXDecButton.contains(mousePos));
-                secXIncButton.setHighlight(secXIncButton.contains(mousePos));
-                secYDecButton.setHighlight(secYDecButton.contains(mousePos));
-                secYIncButton.setHighlight(secYIncButton.contains(mousePos));
+                secXDecCoarse.setHighlight(secXDecCoarse.contains(mousePos));
+                secXIncCoarse.setHighlight(secXIncCoarse.contains(mousePos));
+                secXDecFine.setHighlight(secXDecFine.contains(mousePos));
+                secXIncFine.setHighlight(secXIncFine.contains(mousePos));
+                
+                secYDecCoarse.setHighlight(secYDecCoarse.contains(mousePos));
+                secYIncCoarse.setHighlight(secYIncCoarse.contains(mousePos));
+                secYDecFine.setHighlight(secYDecFine.contains(mousePos));
+                secYIncFine.setHighlight(secYIncFine.contains(mousePos));
             }
         }
 
@@ -485,12 +566,6 @@ int main() {
         if (secondaryMirror) {
             secondaryMirror->centerX = sliderSecondaryX.getValue();
             secondaryMirror->centerY = sliderSecondaryY.getValue();
-        }
-
-        CameraSensor* cameraSensor = dynamic_cast<CameraSensor*>(scene.mirrors[2].get());
-        if (cameraSensor) {
-            cameraSensor->center.x = sliderCameraX.getValue();
-            cameraSensor->center.y = sliderCameraY.getValue();
         }
 
         if (scene.camera) {
@@ -513,102 +588,97 @@ int main() {
 
         sliderSecondaryX.draw(window);
         sliderSecondaryY.draw(window);
-        sliderCameraX.draw(window);
-        sliderCameraY.draw(window);
         
-        // Draw increment buttons
-        secXDecButton.draw(window);
-        secXIncButton.draw(window);
-        secYDecButton.draw(window);
-        secYIncButton.draw(window);
+        secXDecCoarse.draw(window);
+        secXIncCoarse.draw(window);
+        secXDecFine.draw(window);
+        secXIncFine.draw(window);
+        
+        secYDecCoarse.draw(window);
+        secYIncCoarse.draw(window);
+        secYDecFine.draw(window);
+        secYIncFine.draw(window);
+        
+        prevConfigButton.draw(window);
+        nextConfigButton.draw(window);
+        loadConfigButton.draw(window);
+        centerSecondaryButton.draw(window);
         
         optimizeButton.draw(window);
         fineOptimizeButton.draw(window);
 
-        sf::Text title("Cassegrain- Light passes through hole in primary to camera behind", font, 17);
+        sf::Text title("Cassegrain Telescope - Config Selector", font, 17);
         title.setFillColor(sf::Color::White);
         title.setPosition(20, 20);
         window.draw(title);
 
-        sf::Text info("White: Primary (w/ hole)  |  Magenta: Secondary (Hyperbolic)  |  Cyan: Camera (behind)", font, 14);
-        info.setFillColor(sf::Color(200, 200, 200));
-        info.setPosition(20, 50);
-        window.draw(info);
+        // Display current configuration info
+        std::stringstream configInfo;
+        configInfo << "Config " << (currentConfigIndex + 1) << "/" << availableConfigs.size() << ": "
+                   << ConfigBuilder::getConfigSummary(availableConfigs[currentConfigIndex]);
+        sf::Text configText(configInfo.str(), font, 12);
+        configText.setFillColor(sf::Color(150, 200, 255));
+        configText.setPosition(20, 50);
+        window.draw(configText);
 
         if (scene.camera) {
             std::stringstream ss;
-            ss << "Camera Hits: " << scene.camera->hitPoints.size() << " / " << scene.camera->totalRaysTraced;
+            ss << "Hits: " << scene.camera->hitPoints.size() << "/" << scene.camera->totalRaysTraced;
             float percentage = scene.camera->totalRaysTraced > 0 ? 
                 (100.0f * scene.camera->hitPoints.size()) / scene.camera->totalRaysTraced : 0.0f;
             ss << " (" << std::fixed << std::setprecision(1) << percentage << "%)";
+            if (scene.camera->blockedRays > 0) ss << " | Blocked: " << scene.camera->blockedRays;
             
-            if (scene.camera->blockedRays > 0) {
-                ss << "  |  Blocked: " << scene.camera->blockedRays;
-            }
-            
-            sf::Text stats(ss.str(), font, 16);
+            sf::Text stats(ss.str(), font, 14);
             stats.setFillColor(sf::Color::Cyan);
-            stats.setPosition(20, 80);
+            stats.setPosition(20, 75);
             window.draw(stats);
             
             if (scene.camera->hitPoints.size() >= 2) {
                 std::stringstream focusSS;
-                focusSS << "Focus Spread: " << std::fixed << std::setprecision(2) 
-                       << scene.camera->getFocusSpread() << " mm  |  RMS Spot: " 
-                       << scene.camera->getRMSSpotSize() << " mm";
+                focusSS << "RMS: " << std::fixed << std::setprecision(3) 
+                       << scene.camera->getRMSSpotSize() << "mm | Spread: "
+                       << scene.camera->getFocusSpread() << "mm";
                 
-                sf::Text focusStats(focusSS.str(), font, 14);
+                sf::Text focusStats(focusSS.str(), font, 13);
                 focusStats.setFillColor(sf::Color(100, 255, 150));
-                focusStats.setPosition(20, 105);
+                focusStats.setPosition(20, 95);
                 window.draw(focusStats);
             }
             
             std::stringstream opticalSS;
-            float effectiveFocalLength = PRIMARY_FOCAL_LENGTH * 2.5f;
+            float effectiveFocalLength = availableConfigs[currentConfigIndex].systemFocalLength;
             float angularResArcsec = scene.camera->getAngularResolutionArcsec(effectiveFocalLength);
             float fovArcmin = scene.camera->getFieldOfViewArcmin(effectiveFocalLength);
             
-            opticalSS << "Sensor: " << scene.camera->SENSOR_WIDTH_MM << "x" 
-                     << scene.camera->SENSOR_HEIGHT_MM << " mm  |  Pixel: " 
-                     << scene.camera->PIXEL_SIZE_MICRONS << " micro_m  |  f_eff: " 
-                     << std::fixed << std::setprecision(0) << effectiveFocalLength << " mm";
+            opticalSS << "f_eff:" << std::fixed << std::setprecision(0) << effectiveFocalLength 
+                     << "mm | " << std::setprecision(2) << angularResArcsec << "\"/px | FOV:" 
+                     << std::setprecision(1) << fovArcmin << "×" 
+                     << (fovArcmin * scene.camera->SENSOR_HEIGHT_MM / scene.camera->SENSOR_WIDTH_MM) << "'";
             
-            sf::Text opticalSpec(opticalSS.str(), font, 13);
+            sf::Text opticalSpec(opticalSS.str(), font, 12);
             opticalSpec.setFillColor(sf::Color(200, 200, 255));
-            opticalSpec.setPosition(20, 130);
+            opticalSpec.setPosition(20, 115);
             window.draw(opticalSpec);
-            
-            std::stringstream angularSS;
-            angularSS << "Angular Resolution: " << std::fixed << std::setprecision(2) 
-                     << angularResArcsec << " arcsec/pixel  |  FOV: " 
-                     << std::setprecision(2) << fovArcmin << " x " 
-                     << std::setprecision(2) << (fovArcmin * scene.camera->SENSOR_HEIGHT_MM / scene.camera->SENSOR_WIDTH_MM)
-                     << " arcmin";
-            
-            sf::Text angularStats(angularSS.str(), font, 13);
-            angularStats.setFillColor(sf::Color(255, 200, 150));
-            angularStats.setPosition(20, 150);
-            window.draw(angularStats);
         }
 
         if (lastOptResult.maxHits > 0) {
             std::stringstream ss;
-            ss << "Last Optimization: X=" << std::fixed << std::setprecision(2) << lastOptResult.bestSecondaryX
-               << ", Y=" << lastOptResult.bestSecondaryY
-               << " mm -> " << lastOptResult.maxHits << " hits (" 
-               << std::setprecision(1) << lastOptResult.hitPercentage << "%)"
-               << "  |  Focus: " << std::setprecision(2) << lastOptResult.focusSpread << " mm";
+            ss << "Last Opt: X=" << std::fixed << std::setprecision(2) << lastOptResult.bestSecondaryX
+               << " Y=" << lastOptResult.bestSecondaryY << " | " << lastOptResult.maxHits << " hits ("
+               << std::setprecision(1) << lastOptResult.hitPercentage << "%) RMS:" 
+               << std::setprecision(3) << lastOptResult.focusSpread << "mm";
             
-            sf::Text optStats(ss.str(), font, 13);
+            sf::Text optStats(ss.str(), font, 11);
             optStats.setFillColor(sf::Color(100, 255, 100));
-            optStats.setPosition(20, 175);
+            optStats.setPosition(20, 135);
             window.draw(optStats);
         }
 
         if (isOptimizing) {
             sf::Text optimizingText("Optimizing...", font, 16);
             optimizingText.setFillColor(sf::Color::Yellow);
-            optimizingText.setPosition(950, 750);
+            optimizingText.setPosition(1200, 850);
             window.draw(optimizingText);
         }
 
