@@ -12,7 +12,7 @@
 #include <iomanip>
 #include <cmath>
 
-const int NUM_RAYS = 1500;
+const int NUM_RAYS = 50;
 
 class Button {
 public:
@@ -703,8 +703,12 @@ int main() {
         }
 
         scene.rays.clear();
+        
+        // Get primary mirror radius - subtract small epsilon to ensure all rays hit
+        float primaryRadius = (availableConfigs[currentConfigIndex].primaryDiameter / 2.0f) - 0.5f;
+        
         for (int i = 0; i < NUM_RAYS; i++) {
-            float h = -120.0f + i * (240.0f / (NUM_RAYS - 1));
+            float h = -primaryRadius + i * (2.0f * primaryRadius / (NUM_RAYS - 1));
             Ray ray(sf::Vector2f(-50.0f, h), sf::Vector2f(1.0f, 0.0f), sf::Color::Red);
             scene.traceRay(ray);
             scene.rays.push_back(ray);
