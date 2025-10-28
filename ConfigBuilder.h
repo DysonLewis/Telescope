@@ -25,7 +25,7 @@ public:
         // Calculate primary mirror parameters
         float primaryYMax = config.primaryDiameter / 2.0f;
         float primaryYMin = -primaryYMax;
-        float holeRadius = config.secondaryDiameter / 8.0f;
+        float holeRadius = config.secondaryDiameter / 2.0f;
         
         // Create primary parabolic mirror
         auto primary = std::make_unique<ParabolicMirror>(
