@@ -4,3 +4,4 @@ optical_raytracer
 /compiled
 *.py
 
+cassegrain_optics_grid.csv

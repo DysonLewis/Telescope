@@ -420,11 +420,35 @@ int main() {
     rebuildConfiguration(availableConfigs, currentConfigIndex, scene, primaryCenterX, 
                         sliderSecondaryX, sliderSecondaryY);
 
+    bool isPanning = false;
+    sf::Vector2f lastMousePos;
+
     while (window.isOpen()) {
         sf::Event event;
         while (window.pollEvent(event)) {
             if (event.type == sf::Event::Closed) 
                 window.close();
+
+            // Mouse wheel zoom
+            if (event.type == sf::Event::MouseWheelScrolled) {
+                if (event.mouseWheelScroll.wheel == sf::Mouse::VerticalWheel) {
+                    sf::Vector2f mousePos = window.mapPixelToCoords(sf::Mouse::getPosition(window));
+                    
+                    sf::Vector2f worldPosBefore((mousePos.x - scene.offset.x) / scene.scale,
+                                               (scene.offset.y - mousePos.y) / scene.scale);
+                    
+                    float zoomFactor = (event.mouseWheelScroll.delta > 0) ? 1.1f : 0.9f;
+                    scene.scale *= zoomFactor;
+                    scene.baseScale = scene.scale;
+                    
+                    sf::Vector2f worldPosAfter((mousePos.x - scene.offset.x) / scene.scale,
+                                              (scene.offset.y - mousePos.y) / scene.scale);
+                    
+                    scene.offset.x += (worldPosAfter.x - worldPosBefore.x) * scene.scale;
+                    scene.offset.y -= (worldPosAfter.y - worldPosBefore.y) * scene.scale;
+                    scene.baseOffset = scene.offset;
+                }
+            }
 
             if (event.type == sf::Event::Resized) {
                 sf::FloatRect visibleArea(0, 0, event.size.width, event.size.height);
@@ -548,6 +572,15 @@ int main() {
                 mousePos = window.mapPixelToCoords(sf::Vector2i(event.mouseMove.x, event.mouseMove.y));
 
             if (event.type == sf::Event::MouseButtonPressed) {
+                mousePos = window.mapPixelToCoords(sf::Vector2i(event.mouseButton.x, event.mouseButton.y));
+                
+                // Right mouse button for panning
+                if (event.mouseButton.button == sf::Mouse::Right) {
+                    isPanning = true;
+                    lastMousePos = mousePos;
+                    continue;
+                }
+                
                 sliderSecondaryX.handleMousePress(mousePos);
                 sliderSecondaryY.handleMousePress(mousePos);
 
@@ -635,7 +668,7 @@ int main() {
                     lastOptResult = TelescopeOptimizer::optimizeSecondaryPosition(
                         scene.mirrors, scene.camera, NUM_RAYS,
                         -50.0f, -120.0f, 120.0f,
-                        currentSecondaryX - 200.0f, currentSecondaryX + 200.0f, 2.0f,
+                        currentSecondaryX - 1000.0f, currentSecondaryX + 1000.0f, 5.0f,
                         sliderSecondaryY.getValue(),
                         sliderSecondaryY.getValue(), 1.0f
                     );
@@ -671,10 +704,23 @@ int main() {
                 }
             }
             if (event.type == sf::Event::MouseButtonReleased) {
+                if (event.mouseButton.button == sf::Mouse::Right) {
+                    isPanning = false;
+                }
                 sliderSecondaryX.handleMouseRelease();
                 sliderSecondaryY.handleMouseRelease();
             }
             if (event.type == sf::Event::MouseMoved) {
+                mousePos = window.mapPixelToCoords(sf::Vector2i(event.mouseMove.x, event.mouseMove.y));
+                
+                // Handle panning
+                if (isPanning) {
+                    sf::Vector2f delta = mousePos - lastMousePos;
+                    scene.offset += delta;
+                    scene.baseOffset = scene.offset;
+                    lastMousePos = mousePos;
+                }
+                
                 sliderSecondaryX.handleMouseMove(mousePos);
                 sliderSecondaryY.handleMouseMove(mousePos);
                 
