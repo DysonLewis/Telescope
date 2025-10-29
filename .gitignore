@@ -3,5 +3,4 @@ optical_raytracer
 .ipynb_checkpoints/
 /compiled
 *.py
-*.csv
 
