@@ -38,6 +38,9 @@ OptimizationResult TelescopeOptimizer::optimizeSecondaryPosition(
 
     float originalX = secondary->centerX;
     float originalY = secondary->centerY;
+    
+    float bestRMS = std::numeric_limits<float>::max();
+    int bestHitsForRMS = 0;
 
     for (float x = scanXMin; x <= scanXMax; x += scanXStep) {
         for (float y = scanYMin; y <= scanYMax; y += scanYStep) {
@@ -45,24 +48,59 @@ OptimizationResult TelescopeOptimizer::optimizeSecondaryPosition(
             secondary->centerY = y;
             camera->clearHits();
 
-            int hits = 0;
             for (int i = 0; i < numRays; i++) {
                 float h = rayYMin + i * (rayYMax - rayYMin) / (numRays - 1);
                 Ray ray(sf::Vector2f(rayStartX, h), sf::Vector2f(1.0f, 0.0f));
                 traceRay(ray, mirrors, camera, maxBounces);
             }
 
-            hits = camera->hitPoints.size();
+            int hits = camera->hitPoints.size();
+            float currentRMS = camera->getRMSSpotSize();
 
             if (std::abs(y) < 0.01f) {
                 result.scanData.push_back({x, hits});
             }
 
+            // Track maximum hits
             if (hits > result.maxHits) {
                 result.maxHits = hits;
-                result.bestSecondaryX = x;
-                result.bestSecondaryY = y;
             }
+
+            // Prioritize positions with good hits AND better RMS
+            // Must have at least 50% of rays hitting to consider RMS
+            if (hits >= numRays / 2) {
+                if (currentRMS < bestRMS) {
+                    bestRMS = currentRMS;
+                    result.bestSecondaryX = x;
+                    result.bestSecondaryY = y;
+                    bestHitsForRMS = hits;
+                }
+            }
+        }
+    }
+
+    // If no position had good hits, fall back to position with most hits
+    if (bestHitsForRMS == 0) {
+        for (float x = scanXMin; x <= scanXMax; x += scanXStep) {
+            for (float y = scanYMin; y <= scanYMax; y += scanYStep) {
+                secondary->centerX = x;
+                secondary->centerY = y;
+                camera->clearHits();
+
+                for (int i = 0; i < numRays; i++) {
+                    float h = rayYMin + i * (rayYMax - rayYMin) / (numRays - 1);
+                    Ray ray(sf::Vector2f(rayStartX, h), sf::Vector2f(1.0f, 0.0f));
+                    traceRay(ray, mirrors, camera, maxBounces);
+                }
+
+                int hits = camera->hitPoints.size();
+                if (hits == result.maxHits) {
+                    result.bestSecondaryX = x;
+                    result.bestSecondaryY = y;
+                    break;
+                }
+            }
+            if (bestHitsForRMS > 0) break;
         }
     }
 
@@ -71,6 +109,7 @@ OptimizationResult TelescopeOptimizer::optimizeSecondaryPosition(
 
     result.hitPercentage = (100.0f * result.maxHits) / numRays;
     
+    // Evaluate final position for RMS
     secondary->centerX = result.bestSecondaryX;
     secondary->centerY = result.bestSecondaryY;
     camera->clearHits();
@@ -121,7 +160,7 @@ OptimizationResult TelescopeOptimizer::fineOptimize(
     float bestX = startX;
     float bestY = startY;
     int bestHits = 0;
-    float bestRMS = 1000000.0f;
+    float bestRMS = std::numeric_limits<float>::max();
     float stepSize = initialStep;
 
     for (int iter = 0; iter < maxIterations; iter++) {
@@ -134,19 +173,20 @@ OptimizationResult TelescopeOptimizer::fineOptimize(
 
         for (auto& dir : directions) {
             float testX = bestX + dir[0] * stepSize;
-            float testY = bestY;
+            float testY = bestY + dir[1] * stepSize;
 
             int hits = evaluatePosition(secondary, camera, mirrors, numRays, 
                                        rayStartX, rayYMin, rayYMax, 
                                        testX, testY, maxBounces);
 
+            float currentRMS = camera->getRMSSpotSize();
+            
+            // Track best hits
             if (hits > bestHits) {
                 bestHits = hits;
-                bestX = testX;
-                bestY = testY;
             }
 
-            float currentRMS = camera->getRMSSpotSize();
+            // Prioritize better RMS if we have good hits
             if (currentRMS < bestRMS) {
                 bestRMS = currentRMS;
                 bestX = testX;
